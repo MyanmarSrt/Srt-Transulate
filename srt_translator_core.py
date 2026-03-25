@@ -1,53 +1,124 @@
-import srt
-import google.generativeai as genai
 import os
-import time
+import srt
+import datetime
+import google.generativeai as genai
 
+
+# -----------------------------
+# 1. Parse SRT content
+# -----------------------------
 def parse_srt(srt_content):
-    """Parses SRT content into a list of Subtitle objects."""
+    """
+    Convert SRT string into a list of subtitle objects
+    """
     try:
-        return list(srt.parse(srt_content))
+        subtitles = list(srt.parse(srt_content))
+        return subtitles
     except Exception as e:
-        print(f"Error parsing SRT: {e}")
-        return []
+        raise ValueError(f"Failed to parse SRT: {e}")
 
-def chunk_subtitles(subtitles, chunk_size=50):
-    """Chunks a list of Subtitle objects into smaller lists."""
-    chunks = []
+
+# -----------------------------
+# 2. Chunk subtitles
+# -----------------------------
+def chunk_subtitles(subtitles, chunk_size=30):
+    """
+    Break subtitles into chunks to avoid token limits
+    """
     for i in range(0, len(subtitles), chunk_size):
-        chunks.append(subtitles[i : i + chunk_size])
-    return chunks
+        yield subtitles[i:i + chunk_size]
 
-def translate_srt_file(srt_content, model_name='gemini-1.5-flash'):
-    """Translates the entire SRT content and returns as an SRT string."""
+
+# -----------------------------
+# Helper: Format chunk text
+# -----------------------------
+def format_chunk_for_translation(chunk):
+    """
+    Convert subtitle chunk into numbered plain text
+    """
+    lines = []
+    for i, sub in enumerate(chunk, start=1):
+        clean_text = sub.content.replace("\n", " ")
+        lines.append(f"{i}. {clean_text}")
+    return "\n".join(lines)
+
+
+# -----------------------------
+# Helper: Apply translated text
+# -----------------------------
+def apply_translation_to_chunk(chunk, translated_text):
+    """
+    Map translated lines back to subtitle objects
+    """
+    translated_lines = translated_text.strip().split("\n")
+
+    for i, sub in enumerate(chunk):
+        if i < len(translated_lines):
+            # Remove numbering if model returns it
+            line = translated_lines[i]
+            if "." in line:
+                line = line.split(".", 1)[-1].strip()
+            sub.content = line.strip()
+
+    return chunk
+
+
+# -----------------------------
+# 3. Main translation function
+# -----------------------------
+def translate_srt_file(srt_content, model_name="gemini-1.5-flash"):
+    """
+    Translate SRT content into Burmese using Gemini
+    """
+
+    # Load API key
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        return "Error: GEMINI_API_KEY not found in environment variables."
-    
+        raise ValueError("GEMINI_API_KEY not found in environment variables")
+
     genai.configure(api_key=api_key)
+
+    # Initialize model
     model = genai.GenerativeModel(model_name)
-    
+
+    # Parse subtitles
     subtitles = parse_srt(srt_content)
-    if not subtitles:
-        return "Error: Could not parse SRT content."
 
     translated_subtitles = []
-    system_prompt = (
-        "You are an expert translator. Translate the following subtitle text into natural, fluent Burmese (Myanmar). "
-        "Strictly maintain the original meaning. Do not add any extra explanations or notes."
-    )
 
-    for sub in subtitles:
+    # Process in chunks
+    for chunk in chunk_subtitles(subtitles):
+        input_text = format_chunk_for_translation(chunk)
+
+        prompt = f"""
+You are a professional subtitle translator.
+
+Translate the following subtitles into **natural, fluent Burmese**.
+
+IMPORTANT RULES:
+- Keep the SAME number of lines
+- DO NOT merge or split lines
+- DO NOT add extra explanation
+- DO NOT change meaning
+- Keep tone natural (like movie subtitles)
+- Return ONLY translated lines in order
+
+Subtitles:
+{input_text}
+"""
+
         try:
-            if not sub.content.strip():
-                translated_subtitles.append(sub)
-                continue
-                
-            response = model.generate_content(f"{system_prompt}\n\nContent:\n{sub.content}")
-            sub.content = response.text.strip()
-            translated_subtitles.append(sub)
-            time.sleep(0.5) # Rate limit မမိအောင် ခဏစောင့်ပေးခြင်း
-        except Exception:
-            translated_subtitles.append(sub) # Error ဖြစ်ရင် မူရင်းအတိုင်း ထားခဲ့မယ်
+            response = model.generate_content(prompt)
+            translated_text = response.text.strip()
 
-    return srt.compose(translated_subtitles)
+            # Apply translation back
+            updated_chunk = apply_translation_to_chunk(chunk, translated_text)
+            translated_subtitles.extend(updated_chunk)
+
+        except Exception as e:
+            raise RuntimeError(f"Translation failed: {e}")
+
+    # Rebuild SRT content
+    final_srt = srt.compose(translated_subtitles)
+
+    return final_srt
