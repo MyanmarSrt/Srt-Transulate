@@ -2,9 +2,9 @@ import srt
 import google.generativeai as genai
 import os
 import time
+from datetime import timedelta
 
 def parse_srt(srt_content):
-    """Parses SRT content into a list of Subtitle objects."""
     return list(srt.parse(srt_content))
 
 def translate_srt_file(srt_content, model_name='gemini-1.5-flash'):
@@ -28,7 +28,6 @@ def translate_srt_file(srt_content, model_name='gemini-1.5-flash'):
 
     for sub in subtitles:
         try:
-            # စာသားမရှိတဲ့ frame တွေကို ကျော်သွားဖို့
             if not sub.content.strip():
                 translated_subtitles.append(sub)
                 continue
