@@ -5,7 +5,11 @@ import time
 
 def parse_srt(srt_content):
     """Parses SRT content into a list of Subtitle objects."""
-    return list(srt.parse(srt_content))
+    try:
+        return list(srt.parse(srt_content))
+    except Exception as e:
+        print(f"Error parsing SRT: {e}")
+        return []
 
 def chunk_subtitles(subtitles, chunk_size=50):
     """Chunks a list of Subtitle objects into smaller lists."""
@@ -15,6 +19,7 @@ def chunk_subtitles(subtitles, chunk_size=50):
     return chunks
 
 def translate_srt_file(srt_content, model_name='gemini-1.5-flash'):
+    """Translates the entire SRT content and returns as an SRT string."""
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         return "Error: GEMINI_API_KEY not found in environment variables."
@@ -22,15 +27,14 @@ def translate_srt_file(srt_content, model_name='gemini-1.5-flash'):
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel(model_name)
     
-    try:
-        subtitles = parse_srt(srt_content)
-    except Exception as e:
-        return f"Error parsing SRT: {str(e)}"
+    subtitles = parse_srt(srt_content)
+    if not subtitles:
+        return "Error: Could not parse SRT content."
 
     translated_subtitles = []
     system_prompt = (
-        "You are an expert translator. Translate the following SRT subtitle text into natural, fluent Burmese (Myanmar). "
-        "Strictly maintain the original SRT format, timestamps, and numbering. Do not add any extra explanations."
+        "You are an expert translator. Translate the following subtitle text into natural, fluent Burmese (Myanmar). "
+        "Strictly maintain the original meaning. Do not add any extra explanations or notes."
     )
 
     for sub in subtitles:
@@ -38,11 +42,12 @@ def translate_srt_file(srt_content, model_name='gemini-1.5-flash'):
             if not sub.content.strip():
                 translated_subtitles.append(sub)
                 continue
-            response = model.generate_content(f"{system_prompt}\n\nContent to translate:\n{sub.content}")
+                
+            response = model.generate_content(f"{system_prompt}\n\nContent:\n{sub.content}")
             sub.content = response.text.strip()
             translated_subtitles.append(sub)
-            time.sleep(0.3) 
+            time.sleep(0.5) # Rate limit မမိအောင် ခဏစောင့်ပေးခြင်း
         except Exception:
-            translated_subtitles.append(sub)
+            translated_subtitles.append(sub) # Error ဖြစ်ရင် မူရင်းအတိုင်း ထားခဲ့မယ်
 
     return srt.compose(translated_subtitles)
